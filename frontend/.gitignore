@@ -1,0 +1,16 @@
+# Next.js
+.next/
+out/
+
+# Dependencies
+node_modules/
+
+# Environment — DO NOT commit
+.env.local
+.env*.local
+
+# OS
+.DS_Store
+
+# Logs
+*.log

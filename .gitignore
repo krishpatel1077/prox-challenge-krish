@@ -1,8 +1,22 @@
+# Environment
 .env
+.env.*
+!.env.example
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
 venv/
 *.egg-info/
+
+# Knowledge base images (large — commit only DB and index)
+# knowledge/images/   ← leave this commented, you DO want to commit images
+
+# OS
 .DS_Store
+
+# IDE
+.vscode/
+.idea/
