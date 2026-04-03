@@ -17,7 +17,7 @@ from typing import Optional
 
 import faiss
 import numpy as np
-from sentence_transformers import SentenceTransformer
+import anthropic as _anthropic_embed
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -26,14 +26,14 @@ DB_PATH        = KNOWLEDGE_DIR / "vulcan.db"
 FAISS_PATH     = KNOWLEDGE_DIR / "index.faiss"
 INDEX_MAP_PATH = KNOWLEDGE_DIR / "index_map.json"
 IMAGES_DIR     = KNOWLEDGE_DIR / "images"
-EMBED_MODEL    = "all-MiniLM-L6-v2"
+EMBED_MODEL    = "voyage-3-lite"  # Anthropic/Voyage embedding model
 
 # ─── Module-level singletons (loaded once at startup) ─────────────────────────
 
 _db: Optional[sqlite3.Connection] = None
 _faiss_index: Optional[faiss.Index] = None
 _index_map: Optional[list[int]] = None
-_embedder: Optional[SentenceTransformer] = None
+_embed_client: Optional[_anthropic_embed.Anthropic] = None
 
 
 def init_retrieval():
@@ -63,8 +63,8 @@ def init_retrieval():
     with open(INDEX_MAP_PATH) as f:
         _index_map = json.load(f)
 
-    # Embedding model
-    _embedder = SentenceTransformer(EMBED_MODEL)
+    # Embedding client (Anthropic API)
+    _embed_client = _anthropic_embed.Anthropic()
 
     print(f"Retrieval initialized: {_faiss_index.ntotal} vectors, {DB_PATH}")
 
@@ -118,12 +118,18 @@ def semantic_search(query: str, top_k: int = 5) -> list[dict]:
     Use for: broad natural language questions where you don't know
     which specific page or section is relevant.
     """
-    if _embedder is None or _faiss_index is None:
+    if _embed_client is None or _faiss_index is None:
         raise RuntimeError("Call init_retrieval() before querying.")
 
-    # Embed and normalize
-    vec = _embedder.encode([query], normalize_embeddings=True)
-    vec = np.array(vec, dtype=np.float32)
+    # Embed using Anthropic/Voyage API
+    response = _embed_client.embeddings.create(
+        model=EMBED_MODEL,
+        input=[query],
+    )
+    raw = np.array([response.embeddings[0].embedding], dtype=np.float32)
+    # Normalize for cosine similarity
+    norm = np.linalg.norm(raw, axis=1, keepdims=True)
+    vec = raw / np.where(norm == 0, 1, norm)
 
     # Search — returns distances and positions in the FAISS index
     scores, positions = _faiss_index.search(vec, min(top_k, _faiss_index.ntotal))

@@ -36,7 +36,6 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from tenacity import retry, stop_after_attempt, wait_exponential
-from sentence_transformers import SentenceTransformer
 import faiss
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -50,7 +49,7 @@ INDEX_MAP_PATH  = KNOWLEDGE_DIR / "index_map.json"
 
 RASTER_DPI      = 200        # resolution for page rasterization
 VISION_MODEL    = "claude-opus-4-6"   # use Opus for extraction quality
-EMBED_MODEL     = "all-MiniLM-L6-v2"  # lightweight, fast, good quality
+EMBED_MODEL     = "voyage-3-lite"  # Anthropic/Voyage via API
 TEXT_MIN_CHARS  = 100        # minimum chars to consider pdfplumber output useful
 
 # Documents to process (relative to DOCS_DIR)
@@ -543,7 +542,7 @@ def write_image_asset(conn: sqlite3.Connection, image_path: Path,
 
 # ─── FAISS index ───────────────────────────────────────────────────────────────
 
-def build_faiss_index(conn: sqlite3.Connection, embed_model: SentenceTransformer):
+def build_faiss_index(conn: sqlite3.Connection, embed_client):
     """
     Build FAISS index from all page records.
     Embeds: vision_summary + questions_answered + text_content (truncated)
@@ -574,9 +573,18 @@ def build_faiss_index(conn: sqlite3.Connection, embed_model: SentenceTransformer
         texts.append(combined)
         id_map.append(row["id"])
 
-    print(f"  Embedding {len(texts)} pages...")
-    embeddings = embed_model.encode(texts, show_progress_bar=True, normalize_embeddings=True)
-    embeddings = np.array(embeddings, dtype=np.float32)
+    print(f"  Embedding {len(texts)} pages via Voyage API...")
+    all_embeddings = []
+    batch_size = 10  # Voyage API batch limit
+    for i in tqdm(range(0, len(texts), batch_size), desc="  Embedding batches"):
+        batch = texts[i:i+batch_size]
+        response = embed_client.embeddings.create(model=EMBED_MODEL, input=batch)
+        for emb in response.embeddings:
+            all_embeddings.append(emb.embedding)
+    embeddings = np.array(all_embeddings, dtype=np.float32)
+    # Normalize for cosine similarity
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    embeddings = embeddings / np.where(norms == 0, 1, norms)
 
     # Inner product index (works with normalized vectors = cosine similarity)
     dim = embeddings.shape[1]
@@ -764,9 +772,9 @@ def main():
 
         # Build FAISS index
         if not args.skip_faiss:
-            print("\nLoading embedding model...")
-            embed_model = SentenceTransformer(EMBED_MODEL)
-            build_faiss_index(conn, embed_model)
+            print("\nInitializing embedding client...")
+            embed_client = anthropic.Anthropic()
+            build_faiss_index(conn, embed_client)
 
         # Update run record
         elapsed = time.time() - start_time
