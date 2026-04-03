@@ -1,0 +1,27 @@
+# Core AI
+anthropic>=0.40.0
+claude-agent-sdk>=0.1.0
+
+# PDF processing
+pdfplumber>=0.11.4
+pymupdf>=1.24.0          # fitz — PDF rasterization to PNG
+
+# Vector search
+faiss-cpu>=1.8.0
+numpy>=1.26.0
+
+# Embeddings
+sentence-transformers>=3.0.0
+
+# Web server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+
+# Utilities
+python-dotenv>=1.0.0
+Pillow>=10.4.0            # image handling
+tqdm>=4.66.0              # progress bars in extraction script
+tenacity>=8.3.0           # retry logic for vision API calls
+
+# Dev
+pytest>=8.0.0
