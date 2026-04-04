@@ -168,8 +168,8 @@ function SurfaceArtifact({ artifact }: { artifact: Artifact }) {
 }
 
 export default function ArtifactRenderer({ artifact }: { artifact: Artifact }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  // const [mounted, setMounted] = useState(false);
+  // useEffect(() => { setMounted(true); }, []);
 
   const typeLabel: Record<string, string> = {
     "application/vnd.ant.react": "INTERACTIVE",
@@ -187,14 +187,14 @@ export default function ArtifactRenderer({ artifact }: { artifact: Artifact }) {
     "text/html": "text-purple-400",
   };
 
-  if (!mounted) return (
-    <div className="artifact-container my-3">
-      <div className="artifact-header">
-        <span className="text-vulcan-muted">▣ {artifact.title}</span>
-      </div>
-      <div className="p-4 text-sm text-vulcan-muted animate-pulse">Loading...</div>
-    </div>
-  );
+  // if (!mounted) return (
+  //   <div className="artifact-container my-3">
+  //     <div className="artifact-header">
+  //       <span className="text-vulcan-muted">▣ {artifact.title}</span>
+  //     </div>
+  //     <div className="p-4 text-sm text-vulcan-muted animate-pulse">Loading...</div>
+  //   </div>
+  // );
 
   return (
     <div className="artifact-container my-3">

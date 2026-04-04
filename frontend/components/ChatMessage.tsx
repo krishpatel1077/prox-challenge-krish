@@ -62,8 +62,21 @@ export default function ChatMessage({ role, content, streaming }: MessageProps) 
             );
           }
           if (seg.kind === "artifact" && seg.artifact) {
+            if (streaming) {
+              // Don't render artifact while streaming — show placeholder
+              return (
+                <div key={i} className="artifact-container my-3">
+                  <div className="artifact-header">
+                    <span className="text-blue-400">▣</span>
+                    <span className="text-blue-400">INTERACTIVE</span>
+                    <span className="text-vulcan-text/60 ml-1">{seg.artifact.title}</span>
+                  </div>
+                  <div className="p-4 text-sm text-vulcan-muted animate-pulse">Generating visual...</div>
+                </div>
+              );
+            }
             return (
-              <ArtifactRenderer key={i} artifact={seg.artifact} />
+              <ArtifactRenderer key={seg.artifact.identifier || i} artifact={seg.artifact} />
             );
           }
           return null;
