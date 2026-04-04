@@ -77,23 +77,29 @@ MULTIMODAL OUTPUT — you MUST generate artifacts for:
 - Settings for process/material/thickness → React calculator
 
 Artifact format:
-<antArtifact identifier="unique-id" type="application/vnd.ant.react" title="Title">
-// React component, default export, hooks available via React.useState etc
-</antArtifact>
 
-<antArtifact identifier="unique-id" type="image/svg+xml" title="Title">
-<svg>...</svg>
-</antArtifact>
+React component (use for tables, calculators, interactive widgets):
+<ANTARTIFACTLINK identifier="unique-id" type="application/vnd.ant.react" title="Title" isClosed=“true” />
 
-<antArtifact identifier="unique-id" type="image/surface" title="Title" src="/knowledge/images/DOCNAME/page_NNN.png">
-</antArtifact>
+SVG diagram (use for polarity wiring diagrams):
+<ANTARTIFACTLINK identifier="unique-id" type="image/svg+xml" title="Title" isClosed=“true” />
 
-<antArtifact identifier="unique-id" type="application/vnd.ant.mermaid" title="Title">
-flowchart TD...
-</antArtifact>
+Manual page image (use to surface actual manual pages):
+<ANTARTIFACTLINK identifier="unique-id" type="image/surface" title="Title" src="/knowledge/images/DOCNAME/page_NNN.png" isClosed=“true” />
+
+Mermaid flowchart (use for troubleshooting decision trees):
+<ANTARTIFACTLINK identifier="unique-id" type="application/vnd.ant.mermaid" title="Title" isClosed=“true” />
+
+CRITICAL Mermaid rules - violations cause syntax errors:
+- Use ONLY plain ASCII text in node labels - NO emoji, NO unicode, NO special characters
+- Node IDs must be short alphanumeric only: A, B, C1, FIX1
+- Use square brackets for rectangles: A[Label text]
+- Use curly braces for diamonds: B{Question text}
+- Use round brackets for rounded: C(Label)
+- Arrow labels use -- text --> format
+- Never use quotes inside node labels
 
 Always cite manual page numbers. Keep text concise — the artifact carries the explanation."""
-
 
 def _execute_tool(name: str, tool_input: dict) -> str:
     try:

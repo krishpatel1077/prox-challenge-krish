@@ -10,7 +10,7 @@ export interface Artifact {
   identifier: string;
   type: ArtifactType;
   title: string;
-  src?: string;       // for image/surface
+  src?: string;
   content: string;
 }
 
@@ -20,11 +20,13 @@ export interface ParsedSegment {
   artifact?: Artifact;
 }
 
-const ARTIFACT_RE = /<antArtifact([^>]*)>([\s\S]*?)<\/antArtifact>/g;
+// Robust regex — handles multiline, flexible whitespace, single or double quotes
+const ARTIFACT_RE = /<antArtifact\s+([\s\S]*?)>([\s\S]*?)<\/antArtifact>/g;
 
 function parseAttrs(attrString: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  const re = /(\w+)="([^"]*)"/g;
+  // Match both single and double quoted attribute values
+  const re = /(\w+)=["']([^"']*)["']/g;
   let m;
   while ((m = re.exec(attrString)) !== null) {
     attrs[m[1]] = m[2];
@@ -48,9 +50,9 @@ export function parseResponse(raw: string): ParsedSegment[] {
     const attrs = parseAttrs(match[1]);
     const artifact: Artifact = {
       id: Math.random().toString(36).slice(2),
-      identifier: attrs.identifier || "",
-      type: (attrs.type as ArtifactType) || "text/html",
-      title: attrs.title || "Output",
+      identifier: attrs.identifier ?? "",
+      type: (attrs.type as ArtifactType) ?? "text/html",
+      title: attrs.title ?? "Output",
       src: attrs.src,
       content: match[2].trim(),
     };
@@ -58,51 +60,42 @@ export function parseResponse(raw: string): ParsedSegment[] {
     lastIndex = match.index + match[0].length;
   }
 
-  // Remaining text after last artifact
+  // Remaining text
   if (lastIndex < raw.length) {
     const text = raw.slice(lastIndex).trim();
     if (text) segments.push({ kind: "text", text });
   }
 
-  return segments;
+  // If no artifacts found but raw contains <antArtifact, the stream is still
+  // accumulating — return as text so it streams in
+  return segments.length > 0 ? segments : [{ kind: "text", text: raw }];
 }
 
-// Simple markdown → HTML (no external dep)
+// Simple markdown → HTML
 export function markdownToHtml(md: string): string {
   return md
-    // Headers
     .replace(/^### (.+)$/gm, "<h3>$1</h3>")
     .replace(/^## (.+)$/gm, "<h2>$1</h2>")
     .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-    // Bold + italic
     .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    // Inline code
     .replace(/`([^`]+)`/g, "<code>$1</code>")
-    // HR
     .replace(/^---$/gm, "<hr>")
-    // Blockquote
     .replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>")
-    // Tables — basic support
+    // Tables
     .replace(/^\|(.+)\|$/gm, (line) => {
-      const cells = line.split("|").slice(1, -1).map((c) => c.trim());
-      return `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`;
+      const cells = line.split("|").slice(1, -1);
+      return `<tr>${cells.map((c) => `<td>${c.trim()}</td>`).join("")}</tr>`;
     })
-    // Wrap consecutive <tr> blocks in a table
-    .replace(/(<tr>[\s\S]+?<\/tr>\n)+/g, (block) => {
-      // If it starts with header-like content, wrap differently
-      return `<table>${block}</table>`;
-    })
+    .replace(/(<tr>[\s\S]*?<\/tr>\n?)+/g, (block) => `<table>${block}</table>`)
+    // Skip separator rows like |---|---|
+    .replace(/<tr><td>[-: ]+<\/td>(<td>[-: ]+<\/td>)*<\/tr>/g, "")
     // Lists
     .replace(/^[\*\-] (.+)$/gm, "<li>$1</li>")
-    .replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>")
+    .replace(/(<li>[\s\S]*?<\/li>\n?)+/g, "<ul>$&</ul>")
     .replace(/^\d+\. (.+)$/gm, "<li>$1</li>")
-    // Paragraphs: double newlines
+    // Paragraphs
     .replace(/\n\n+/g, "</p><p>")
-    .replace(/\n/g, "<br>")
-    // Wrap in paragraph if not already tagged
-    .replace(/^(?!<[a-z])(.+)$/gm, (line) =>
-      line.startsWith("<") ? line : `<p>${line}</p>`
-    );
+    .replace(/\n/g, "<br>");
 }

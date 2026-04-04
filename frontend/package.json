@@ -8,7 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "mermaid": "^11.0.0",
+    "mermaid": "^10.9.1",
     "next": "^16.2.0",
     "react": "^18",
     "react-dom": "^18"
