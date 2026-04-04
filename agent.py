@@ -49,6 +49,7 @@ Always call a tool before answering."""
 # Artifact generation prompts by type
 ARTIFACT_PROMPTS = {
     "duty_cycle": """Generate a React interactive duty cycle table for the Vulcan OmniPro 220 MIG at 240V.
+IMPORTANT: Do NOT use any import statements. Access hooks as React.useState, React.useEffect etc.
 Data: 200A=25% (weld 150s, rest 450s per 10min), 115A=100% (continuous).
 Dark theme: background #0f172a, text #e2e8f0, accent #3b82f6.
 Clickable rows, progress bars, shows weld/rest time in seconds.
@@ -112,7 +113,7 @@ def _generate_artifact(artifact_key: str) -> str:
     
     response = _client.messages.create(
         model=MODEL,
-        max_tokens=2048,
+        max_tokens=4096,
         system="You output raw code only. No markdown fences, no explanation, no preamble. Just the code.",
         messages=[{"role": "user", "content": prompt}]
     )
