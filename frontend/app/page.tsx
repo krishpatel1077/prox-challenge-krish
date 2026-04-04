@@ -67,10 +67,11 @@ export default function Home() {
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split("\n");
 
+        let doneSignaled = false;
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6).trim();
-          if (data === "[DONE]") break;
+          if (data === "[DONE]") { doneSignaled = true; continue; }
           try {
             const parsed = JSON.parse(data);
             if (parsed.chunk) {
@@ -96,6 +97,7 @@ export default function Home() {
             }
           } catch {}
         }
+        if (doneSignaled) break;
       }
 
       // Mark streaming done
