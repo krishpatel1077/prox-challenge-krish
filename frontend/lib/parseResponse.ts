@@ -20,14 +20,12 @@ export interface ParsedSegment {
   artifact?: Artifact;
 }
 
-// Maps vizblock type attr → ArtifactType
 const TYPE_MAP: Record<string, ArtifactType> = {
   "react": "application/vnd.ant.react",
   "mermaid": "application/vnd.ant.mermaid",
   "svg": "image/svg+xml",
   "image": "image/surface",
   "html": "text/html",
-  // Also accept full mime types directly
   "application/vnd.ant.react": "application/vnd.ant.react",
   "application/vnd.ant.mermaid": "application/vnd.ant.mermaid",
   "image/svg+xml": "image/svg+xml",
@@ -36,88 +34,98 @@ const TYPE_MAP: Record<string, ArtifactType> = {
 
 function parseAttrs(attrString: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  const re = /(\w+)=["']([^"']*)["']/g;
+  // Match key="value" or key='value' — value can contain anything except the quote
+  const re = /(\w+)=(?:"([^"]*)"|'([^']*)')/g;
   let m;
   while ((m = re.exec(attrString)) !== null) {
-    attrs[m[1]] = m[2];
+    attrs[m[1]] = m[2] ?? m[3] ?? "";
   }
   return attrs;
 }
 
-// Matches both <vizblock ...>content</vizblock>
-// and <antArtifact ...>content</antArtifact>
-const BLOCK_RE = /<(?:vizblock|antArtifact)\s+([\s\S]*?)>([\s\S]*?)<\/(?:vizblock|antArtifact)>/g;
-
-// Also match self-closing image blocks: <vizblock type="image" src="..." title="..."></vizblock>
-// and <antArtifact type="image/surface" src="..." ...></antArtifact>
-const SELF_CLOSING_RE = /<(?:vizblock|antArtifact)\s+([^>]*?(?:type=["']image[^"']*["'][^>]*?))><\/(?:vizblock|antArtifact)>/g;
-
+/**
+ * String-based parser — finds opening tags, then scans forward for the
+ * matching closing tag. Not vulnerable to > inside JSX content.
+ */
 export function parseResponse(raw: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
-  const matches: Array<{ index: number; length: number; artifact: Artifact }> = [];
-
-  // Find all block matches
-  BLOCK_RE.lastIndex = 0;
-  let m;
-  while ((m = BLOCK_RE.exec(raw)) !== null) {
-    const attrs = parseAttrs(m[1]);
+  const TAG_NAMES = ["antArtifact", "vizblock"];
+  
+  let pos = 0;
+  
+  while (pos < raw.length) {
+    // Find the next opening tag
+    let nearestOpen = -1;
+    let nearestTagName = "";
+    
+    for (const tagName of TAG_NAMES) {
+      const idx = raw.indexOf(`<${tagName}`, pos);
+      if (idx !== -1 && (nearestOpen === -1 || idx < nearestOpen)) {
+        nearestOpen = idx;
+        nearestTagName = tagName;
+      }
+    }
+    
+    if (nearestOpen === -1) {
+      // No more tags — rest is text
+      const text = raw.slice(pos).trim();
+      if (text) segments.push({ kind: "text", text });
+      break;
+    }
+    
+    // Text before this tag
+    if (nearestOpen > pos) {
+      const text = raw.slice(pos, nearestOpen).trim();
+      if (text) segments.push({ kind: "text", text });
+    }
+    
+    // Find end of opening tag (the >)
+    const openTagEnd = raw.indexOf(">", nearestOpen);
+    if (openTagEnd === -1) {
+      // Malformed — treat rest as text
+      const text = raw.slice(nearestOpen).trim();
+      if (text) segments.push({ kind: "text", text });
+      break;
+    }
+    
+    const openTagFull = raw.slice(nearestOpen, openTagEnd + 1);
+    // Extract just the attributes part (between <tagName and >)
+    const attrString = openTagFull.slice(nearestTagName.length + 1, -1).trim();
+    const attrs = parseAttrs(attrString);
+    
+    // Find closing tag
+    const closeTag = `</${nearestTagName}>`;
+    const closeStart = raw.indexOf(closeTag, openTagEnd + 1);
+    
+    let content = "";
+    let endPos: number;
+    
+    if (closeStart === -1) {
+      // No closing tag — self-closing or incomplete; treat as empty artifact
+      endPos = openTagEnd + 1;
+    } else {
+      content = raw.slice(openTagEnd + 1, closeStart).trim();
+      endPos = closeStart + closeTag.length;
+    }
+    
     const rawType = attrs.type ?? "";
     const type: ArtifactType = TYPE_MAP[rawType] ?? "application/vnd.ant.react";
-    matches.push({
-      index: m.index,
-      length: m[0].length,
+    
+    segments.push({
+      kind: "artifact",
       artifact: {
         id: Math.random().toString(36).slice(2),
         identifier: attrs.identifier ?? attrs.id ?? "",
         type,
         title: attrs.title ?? "Output",
         src: attrs.src,
-        content: m[2].trim(),
+        content,
       },
     });
+    
+    pos = endPos;
   }
-
-  // Find self-closing image blocks not already captured
-  SELF_CLOSING_RE.lastIndex = 0;
-  while ((m = SELF_CLOSING_RE.exec(raw)) !== null) {
-    const alreadyCaptured = matches.some(
-      (x) => x.index === m!.index
-    );
-    if (!alreadyCaptured) {
-      const attrs = parseAttrs(m[1]);
-      matches.push({
-        index: m.index,
-        length: m[0].length,
-        artifact: {
-          id: Math.random().toString(36).slice(2),
-          identifier: attrs.identifier ?? "",
-          type: "image/surface",
-          title: attrs.title ?? "Manual Page",
-          src: attrs.src,
-          content: "",
-        },
-      });
-    }
-  }
-
-  // Sort by position
-  matches.sort((a, b) => a.index - b.index);
-
-  let lastIndex = 0;
-  for (const match of matches) {
-    if (match.index > lastIndex) {
-      const text = raw.slice(lastIndex, match.index).trim();
-      if (text) segments.push({ kind: "text", text });
-    }
-    segments.push({ kind: "artifact", artifact: match.artifact });
-    lastIndex = match.index + match.length;
-  }
-
-  if (lastIndex < raw.length) {
-    const text = raw.slice(lastIndex).trim();
-    if (text) segments.push({ kind: "text", text });
-  }
-
+  
   return segments.length > 0 ? segments : [{ kind: "text", text: raw }];
 }
 
