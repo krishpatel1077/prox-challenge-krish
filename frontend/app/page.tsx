@@ -63,11 +63,12 @@ export default function Home() {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
+      
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split("\n");
-
         let doneSignaled = false;
+        let updated = false;
+      
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6).trim();
@@ -76,27 +77,24 @@ export default function Home() {
             const parsed = JSON.parse(data);
             if (parsed.chunk) {
               accumulated += parsed.chunk;
-              console.log("RAW:", accumulated.slice(-200)); // last 200 chars
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: accumulated }
-                    : m
-                )
-              );
+              updated = true;
             }
             if (parsed.error) {
               accumulated += `\n\n_Error: ${parsed.error}_`;
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: accumulated }
-                    : m
-                )
-              );
+              updated = true;
             }
           } catch {}
         }
+      
+        // Update state ONCE after processing all lines in this buffer
+        if (updated) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: accumulated } : m
+            )
+          );
+        }
+      
         if (doneSignaled) break;
       }
 
