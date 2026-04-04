@@ -75,6 +75,7 @@ export default function Home() {
             const parsed = JSON.parse(data);
             if (parsed.chunk) {
               accumulated += parsed.chunk;
+              console.log("RAW:", accumulated.slice(-200)); // last 200 chars
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId

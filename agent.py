@@ -2,11 +2,12 @@
 agent.py — Vulcan OmniPro 220 Technical Expert Agent
 ======================================================
 Uses the standard Anthropic Python client with tool use + streaming.
-The Claude Agent SDK requires interactive login and cannot run headlessly
-on Railway, so we implement the agent loop directly via the Messages API.
+After the main response, detects ANTARTIFACTLINK tags and generates
+the actual artifact content via a follow-up call.
 """
 
 import json
+import re
 import asyncio
 from typing import AsyncIterator
 
@@ -18,7 +19,7 @@ from retrieval import init_retrieval, tool_search_knowledge, tool_lookup_spec
 load_dotenv()
 
 _client = anthropic.Anthropic()
-MODEL   = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-4-6"
 
 TOOLS = [
     {
@@ -41,12 +42,6 @@ TOOLS = [
         "description": (
             "Direct structured lookup for exact specifications. "
             "spec_type: duty_cycle, polarity, troubleshooting, selection, or images. "
-            "Examples: "
-            "{spec_type:'duty_cycle', params:{process:'MIG', voltage:240}} "
-            "{spec_type:'polarity', params:{process:'TIG'}} "
-            "{spec_type:'troubleshooting', params:{symptom:'porosity'}} "
-            "{spec_type:'selection', params:{material:'aluminum'}} "
-            "{spec_type:'images', params:{tags:['polarity']}}"
         ),
         "input_schema": {
             "type": "object",
@@ -65,41 +60,21 @@ TOOLS = [
 SYSTEM_PROMPT = """You are the technical expert for the Vulcan OmniPro 220 multiprocess welder.
 You have deep knowledge of MIG, Flux-Cored, TIG, and Stick processes, duty cycles, polarity setups, wire feed, troubleshooting, and weld diagnosis.
 
-Your user is in their garage with this welder. Be direct, practical, precise. Never vague when you have exact data.
+Your user is in their garage. Be direct, practical, precise. Always cite manual page numbers.
 
-ALWAYS call a tool before answering. Never answer from memory alone.
+ALWAYS call a tool before answering. Never answer from memory alone."""
 
-MULTIMODAL OUTPUT — you MUST generate artifacts for:
-- Polarity/cable connections → SVG polarity diagram + surface quick-start-guide page 2 image
-- Duty cycle questions → React interactive table
-- Troubleshooting weld defects → Mermaid flowchart
-- Process selection → React selector widget
-- Settings for process/material/thickness → React calculator
 
-Artifact format:
+ARTIFACT_SYSTEM = """You generate self-contained visual components for a welding expert app.
+Output ONLY the raw component code with no explanation, no markdown fences, no preamble.
 
-React component (use for tables, calculators, interactive widgets):
-<ANTARTIFACTLINK identifier="unique-id" type="application/vnd.ant.react" title="Title" isClosed=“true” />
+For React: output JSX with hooks via React.useState, React.useEffect etc. End with: export default function ComponentName() {...}
+For SVG: output a complete <svg> element.
+For Mermaid: output flowchart TD syntax using only ASCII text, no emoji.
 
-SVG diagram (use for polarity wiring diagrams):
-<ANTARTIFACTLINK identifier="unique-id" type="image/svg+xml" title="Title" isClosed=“true” />
+The component renders inside a dark-themed app (background #111118, text #e2e8f0).
+Keep it focused, practical, and visually clear."""
 
-Manual page image (use to surface actual manual pages):
-<ANTARTIFACTLINK identifier="unique-id" type="image/surface" title="Title" src="/knowledge/images/DOCNAME/page_NNN.png" isClosed=“true” />
-
-Mermaid flowchart (use for troubleshooting decision trees):
-<ANTARTIFACTLINK identifier="unique-id" type="application/vnd.ant.mermaid" title="Title" isClosed=“true” />
-
-CRITICAL Mermaid rules - violations cause syntax errors:
-- Use ONLY plain ASCII text in node labels - NO emoji, NO unicode, NO special characters
-- Node IDs must be short alphanumeric only: A, B, C1, FIX1
-- Use square brackets for rectangles: A[Label text]
-- Use curly braces for diamonds: B{Question text}
-- Use round brackets for rounded: C(Label)
-- Arrow labels use -- text --> format
-- Never use quotes inside node labels
-
-Always cite manual page numbers. Keep text concise — the artifact carries the explanation."""
 
 def _execute_tool(name: str, tool_input: dict) -> str:
     try:
@@ -117,11 +92,79 @@ def _execute_tool(name: str, tool_input: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _generate_artifact_content(artifact_type: str, title: str, context: str) -> str:
+    """Generate the actual artifact content for an ANTARTIFACTLINK reference."""
+    
+    type_instructions = {
+        "application/vnd.ant.react": f"Generate a React interactive component for: {title}. Output only JSX code ending with 'export default function {title.replace(' ', '').replace('-', '')}() {{...}}'",
+        "image/svg+xml": f"Generate an SVG wiring/polarity diagram for: {title}. Output only the <svg> element.",
+        "application/vnd.ant.mermaid": f"Generate a Mermaid flowchart for: {title}. Output only 'flowchart TD' syntax with ASCII-only labels.",
+    }
+    
+    instruction = type_instructions.get(artifact_type, f"Generate content for: {title}")
+    
+    response = _client.messages.create(
+        model=MODEL,
+        max_tokens=2048,
+        system=ARTIFACT_SYSTEM,
+        messages=[{
+            "role": "user",
+            "content": f"{instruction}\n\nContext from the conversation:\n{context}"
+        }]
+    )
+    
+    content = ""
+    for block in response.content:
+        if hasattr(block, "text"):
+            content += block.text
+    
+    # Strip any markdown fences if Claude added them
+    content = re.sub(r'^```\w*\n?', '', content.strip())
+    content = re.sub(r'\n?```$', '', content.strip())
+    return content.strip()
+
+
+ANTARTIFACTLINK_RE = re.compile(
+    r'<ANTARTIFACTLINK\s+([^/]*?)\s*/?>',
+    re.IGNORECASE
+)
+
+def _parse_antartifactlink_attrs(attr_string: str) -> dict:
+    attrs = {}
+    for m in re.finditer(r'(\w+)=["\']([^"\']*)["\']', attr_string):
+        attrs[m.group(1)] = m.group(2)
+    return attrs
+
+
+def _replace_antartifactlinks(text: str, context: str) -> str:
+    """Replace ANTARTIFACTLINK tags with actual antArtifact tags containing generated content."""
+    
+    def replace_match(m):
+        attrs = _parse_antartifactlink_attrs(m.group(1))
+        artifact_type = attrs.get("type", "application/vnd.ant.react")
+        title = attrs.get("title", "Component")
+        identifier = attrs.get("identifier", "artifact")
+        
+        # For image/surface types, no content needed
+        if artifact_type == "image/surface":
+            src = attrs.get("src", "")
+            return f'<antArtifact identifier="{identifier}" type="image/surface" title="{title}" src="{src}"></antArtifact>'
+        
+        # Generate the actual content
+        try:
+            content = _generate_artifact_content(artifact_type, title, context)
+            return f'<antArtifact identifier="{identifier}" type="{artifact_type}" title="{title}">\n{content}\n</antArtifact>'
+        except Exception as e:
+            return f'<antArtifact identifier="{identifier}" type="{artifact_type}" title="{title}">\n// Error generating content: {e}\n</antArtifact>'
+    
+    return ANTARTIFACTLINK_RE.sub(replace_match, text)
+
+
 async def run_agent(question: str) -> AsyncIterator[str]:
-    """Run agent and stream text response including artifact XML."""
+    """Run agent and stream text response. Replaces ANTARTIFACTLINK refs with real content."""
     messages = [{"role": "user", "content": question}]
 
-    # Tool loop — up to 5 turns
+    # Tool loop
     for _ in range(5):
         response = _client.messages.create(
             model=MODEL,
@@ -134,8 +177,10 @@ async def run_agent(question: str) -> AsyncIterator[str]:
         tool_uses = [b for b in response.content if b.type == "tool_use"]
 
         if not tool_uses:
-            # No more tools — stream final answer
+            # Stream final answer
             messages.append({"role": "assistant", "content": response.content})
+            
+            full_text = ""
             with _client.messages.stream(
                 model=MODEL,
                 max_tokens=4096,
@@ -144,10 +189,36 @@ async def run_agent(question: str) -> AsyncIterator[str]:
                 messages=messages[:-1],
             ) as stream:
                 for text in stream.text_stream:
+                    full_text += text
                     yield text
+            
+            # Check if there are any ANTARTIFACTLINK tags to replace
+            if "ANTARTIFACTLINK" in full_text.upper():
+                # Build context for artifact generation
+                context = f"Question: {question}\n\nAnswer so far:\n{full_text[:500]}"
+                
+                # Find all links and generate replacements
+                links = list(ANTARTIFACTLINK_RE.finditer(full_text))
+                if links:
+                    yield "\n\n"  # separator before artifacts
+                    for m in links:
+                        attrs = _parse_antartifactlink_attrs(m.group(1))
+                        artifact_type = attrs.get("type", "application/vnd.ant.react")
+                        title = attrs.get("title", "Component")
+                        identifier = attrs.get("identifier", "artifact")
+                        
+                        if artifact_type == "image/surface":
+                            src = attrs.get("src", "")
+                            yield f'<antArtifact identifier="{identifier}" type="image/surface" title="{title}" src="{src}"></antArtifact>\n'
+                        else:
+                            try:
+                                content = _generate_artifact_content(artifact_type, title, context)
+                                yield f'<antArtifact identifier="{identifier}" type="{artifact_type}" title="{title}">\n{content}\n</antArtifact>\n'
+                            except Exception as e:
+                                pass  # silently skip failed artifacts
             return
 
-        # Execute tools and continue
+        # Execute tools
         tool_results = []
         for tu in tool_uses:
             result = _execute_tool(tu.name, tu.input)
@@ -160,7 +231,7 @@ async def run_agent(question: str) -> AsyncIterator[str]:
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
 
-    # Max turns hit — stream with what we have
+    # Max turns
     with _client.messages.stream(
         model=MODEL,
         max_tokens=4096,
