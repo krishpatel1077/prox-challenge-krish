@@ -18,4 +18,5 @@ RUN chown -R appuser:appuser /app
 # Switch to non-root user
 USER appuser
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form so $PORT gets expanded by the shell
+CMD uvicorn server:app --host 0.0.0.0 --port $PORT
